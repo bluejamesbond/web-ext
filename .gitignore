@@ -11,3 +11,5 @@ node_modules
 dist/*
 artifacts/*
 coverage/*
+.idea/
+yarn.lock

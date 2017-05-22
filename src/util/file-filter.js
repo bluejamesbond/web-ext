@@ -3,7 +3,9 @@ import path from 'path';
 
 import minimatch from 'minimatch';
 
-import {createLogger} from './logger';
+import fs from 'fs';
+
+import { createLogger } from './logger';
 
 const log = createLogger(__filename);
 
@@ -37,27 +39,43 @@ export class FileFilter {
   sourceDir: string;
 
   constructor({
-    baseIgnoredPatterns = [
-      '**/*.xpi',
-      '**/*.zip',
-      '**/.*', // any hidden file and folder
-      '**/.*/**/*', // and the content inside hidden folder
-      '**/node_modules',
-      '**/node_modules/**/*',
-    ],
-    ignoreFiles = [],
-    sourceDir,
-    artifactsDir,
-  }: FileFilterOptions = {}) {
+                baseIgnoredPatterns = [
+                  '**/*.xpi',
+                  '**/*.zip',
+                  '**/.*', // any hidden file and folder
+                  '**/.*/**/*', // and the content inside hidden folder
+                  '**/node_modules',
+                  '**/node_modules/**/*',
+                ],
+                ignoreFiles = [],
+                sourceDir,
+                artifactsDir,
+              }: FileFilterOptions = {}) {
     sourceDir = path.resolve(sourceDir);
 
     this.filesToIgnore = [];
     this.sourceDir = sourceDir;
 
+    if (sourceDir) {
+      const ignoreFilePath = path.join(sourceDir, '.wextignore');
+
+      if (fs.existsSync(ignoreFilePath)) {
+        try {
+          const text = fs.readFileSync(ignoreFilePath, 'utf8');
+          const filesToIgnore = text.split('\n');
+          this.addToIgnoreList(filesToIgnore);
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
     this.addToIgnoreList(baseIgnoredPatterns);
+
     if (ignoreFiles) {
       this.addToIgnoreList(ignoreFiles);
     }
+
     if (artifactsDir && isSubPath(sourceDir, artifactsDir)) {
       artifactsDir = path.resolve(artifactsDir);
       log.debug(
