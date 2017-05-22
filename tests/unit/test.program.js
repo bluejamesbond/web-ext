@@ -10,17 +10,24 @@ import {assert} from 'chai';
 import {defaultVersionGetter, main, Program} from '../../src/program';
 import commands from '../../src/cmd';
 import {onlyInstancesOf, UsageError} from '../../src/errors';
-import {fake, makeSureItFails} from './helpers';
+import {
+  createFakeProcess,
+  fake,
+  makeSureItFails,
+  ErrorWithCode,
+} from './helpers';
 import {ConsoleStream} from '../../src/util/logger';
 
 
 describe('program.Program', () => {
 
   function execProgram(program, options = {}) {
-    let fakeProcess = fake(process);
-    let absolutePackageDir = path.join(__dirname, '..', '..');
+    const fakeProcess = createFakeProcess();
+    const absolutePackageDir = path.join(__dirname, '..', '..');
     return program.execute(
       absolutePackageDir, {
+        getVersion: () => spy(),
+        checkForUpdates: spy(),
         systemProcess: fakeProcess,
         shouldExitProgram: false,
         ...options,
@@ -28,8 +35,8 @@ describe('program.Program', () => {
   }
 
   it('executes a command callback', () => {
-    let thing = spy(() => Promise.resolve());
-    let program = new Program(['thing'])
+    const thing = spy(() => Promise.resolve());
+    const program = new Program(['thing'])
       .command('thing', 'does a thing', thing);
     return execProgram(program)
       .then(() => {
@@ -38,7 +45,7 @@ describe('program.Program', () => {
   });
 
   it('reports unknown commands', () => {
-    let program = new Program(['thing']);
+    const program = new Program(['thing']);
     return execProgram(program)
       .then(makeSureItFails())
       .catch(onlyInstancesOf(UsageError, (error) => {
@@ -47,7 +54,7 @@ describe('program.Program', () => {
   });
 
   it('reports missing command', () => {
-    let program = new Program([]);
+    const program = new Program([]);
     return execProgram(program)
       .then(makeSureItFails())
       .catch(onlyInstancesOf(UsageError, (error) => {
@@ -56,8 +63,8 @@ describe('program.Program', () => {
   });
 
   it('exits 1 on a thrown error', () => {
-    let fakeProcess = fake(process);
-    let program = new Program(['cmd'])
+    const fakeProcess = createFakeProcess();
+    const program = new Program(['cmd'])
       .command('cmd', 'some command', () => {
         throw new Error('this is an error from a command handler');
       });
@@ -83,17 +90,9 @@ describe('program.Program', () => {
 
   it('handles errors that have codes', () => {
 
-    class ErrorWithCode extends Error {
-      code: string;
-      constructor() {
-        super('pretend this is a system error');
-        this.code = 'SOME_CODE';
-      }
-    }
-
-    let program = new Program(['cmd'])
+    const program = new Program(['cmd'])
       .command('cmd', 'some command', () => {
-        let error = new ErrorWithCode();
+        const error = new ErrorWithCode();
         throw error;
       });
     // This is just a smoke test to make sure the error code doesn't
@@ -106,8 +105,8 @@ describe('program.Program', () => {
   });
 
   it('lets commands define options', () => {
-    let handler = spy(() => Promise.resolve());
-    let program = new Program(['cmd'])
+    const handler = spy(() => Promise.resolve());
+    const program = new Program(['cmd'])
       .command('cmd', 'some command', handler, {
         'some-option': {
           default: 'default value',
@@ -123,8 +122,8 @@ describe('program.Program', () => {
   });
 
   it('preserves global option configuration', () => {
-    let handler = spy(() => Promise.resolve());
-    let program = new Program(['cmd'])
+    const handler = spy(() => Promise.resolve());
+    const program = new Program(['cmd'])
       .setGlobalOptions({
         'global-option': {
           type: 'string',
@@ -168,7 +167,7 @@ describe('program.Program', () => {
   it('configures the logger when verbose', () => {
     const logStream = fake(new ConsoleStream());
 
-    let program = new Program(['--verbose', 'thing']);
+    const program = new Program(['--verbose', 'thing']);
     program.setGlobalOptions({
       verbose: {
         type: 'boolean',
@@ -176,15 +175,18 @@ describe('program.Program', () => {
     });
     program.command('thing', 'does a thing', () => {});
 
-    return execProgram(program, {getVersion: spy(), logStream})
+    return execProgram(program, {
+      getVersion: spy(),
+      logStream,
+    })
       .then(() => {
         assert.equal(logStream.makeVerbose.called, true);
       });
   });
 
   it('checks the version when verbose', () => {
-    let version = spy();
-    let program = new Program(['--verbose', 'thing']);
+    const version = spy();
+    const program = new Program(['--verbose', 'thing']);
     program.setGlobalOptions({
       verbose: {
         type: 'boolean',
@@ -200,7 +202,7 @@ describe('program.Program', () => {
 
   it('does not configure the logger unless verbose', () => {
     const logStream = fake(new ConsoleStream());
-    let program = new Program(['thing']).command('thing', '', () => {});
+    const program = new Program(['thing']).command('thing', '', () => {});
     program.setGlobalOptions({
       verbose: {
         type: 'boolean',
@@ -224,9 +226,9 @@ describe('program.Program', () => {
     return execProgram(new Program(['--nope']))
       .then(makeSureItFails())
       .catch((error) => {
-        // It's a bit weird that yargs calls this an argument rather
-        // than an option but, hey, it's an error.
-        assert.match(error.message, /Unknown argument: nope/);
+        // Make sure that the option name is in the error message.
+        // Be careful not to rely on any text from yargs since it's localized.
+        assert.match(error.message, /nope/);
       });
   });
 
@@ -236,23 +238,61 @@ describe('program.Program', () => {
     return execProgram(program)
       .then(makeSureItFails())
       .catch((error) => {
-        // Again, yargs calls this an argument not an option for some reason.
-        assert.match(error.message, /Unknown argument: nope/);
+        // Make sure that the option name is in the error message.
+        // Be careful not to rely on any text from yargs since it's localized.
+        assert.match(error.message, /nope/);
       });
   });
 
+  it('checks for updates automatically', () => {
+    const handler = spy();
+    const getVersion = () => 'some-package-version';
+    const checkForUpdates = sinon.stub();
+    const program = new Program(['run'])
+      .command('run', 'some command', handler);
+    return execProgram(program, {
+      checkForUpdates,
+      getVersion,
+      globalEnv: 'production',
+    })
+      .then(() => {
+        assert.equal(checkForUpdates.firstCall.args[0].version,
+                    'some-package-version');
+      });
+  });
+
+  it('does not check for updates during development', () => {
+    const handler = spy();
+    const getVersion = () => 'some-package-version';
+    const checkForUpdates = sinon.stub();
+    const program = new Program(['run'])
+      .command('run', 'some command', handler);
+    return execProgram(program, {
+      checkForUpdates,
+      getVersion,
+      globalEnv: 'development',
+    })
+      .then(() => {
+        assert.equal(checkForUpdates.called, false);
+      });
+  });
 });
 
 
 describe('program.main', () => {
 
   function execProgram(argv, {projectRoot = '', ...mainOptions}: Object = {}) {
-    const runOptions = {shouldExitProgram: false, systemProcess: fake(process)};
+    const runOptions = {
+      getVersion: () => 'not-a-real-version',
+      checkForUpdates: spy(),
+      shouldExitProgram: false,
+      systemProcess: createFakeProcess(),
+    };
     return main(projectRoot, {argv, runOptions, ...mainOptions});
   }
 
   it('executes a command handler', () => {
-    let fakeCommands = fake(commands, {
+    const fakeCommands = fake(commands, {
       build: () => Promise.resolve(),
     });
     return execProgram(['build'], {commands: fakeCommands})
@@ -261,6 +301,15 @@ describe('program.main', () => {
         // options with handlers. It does not extensively test the
         // configuration of all handlers.
         assert.equal(fakeCommands.build.called, true);
+      });
+  });
+
+  it('throws an error if no command is given', () => {
+    const fakeCommands = fake(commands, {});
+    return execProgram([], {commands: fakeCommands})
+      .then(makeSureItFails())
+      .catch((error) => {
+        assert.match(error.message, /You must specify a command/);
       });
   });
 
@@ -326,6 +375,34 @@ describe('program.main', () => {
       });
   });
 
+  it('passes the url of a firefox binary when specified', () => {
+    const fakeCommands = fake(commands, {
+      run: () => Promise.resolve(),
+    });
+    return execProgram(
+      ['run', '--start-url', 'www.example.com'],
+      {commands: fakeCommands})
+      .then(() => {
+        assert.equal(fakeCommands.run.called, true);
+        assert.equal(fakeCommands.run.firstCall.args[0].startUrl,
+                     'www.example.com');
+      });
+  });
+
+  it('opens browser console when --browser-console is specified', () => {
+    const fakeCommands = fake(commands, {
+      run: () => Promise.resolve(),
+    });
+    return execProgram(
+      ['run', '--browser-console'],
+      {commands: fakeCommands})
+      .then(() => {
+        assert.equal(fakeCommands.run.called, true);
+        assert.equal(fakeCommands.run.firstCall.args[0].browserConsole,
+                     true);
+      });
+  });
+
   it('converts custom preferences into an object', () => {
     const fakeCommands = fake(commands, {
       run: () => Promise.resolve(),
@@ -341,27 +418,39 @@ describe('program.main', () => {
       });
   });
 
+  it('passes shouldExitProgram option to commands', () => {
+    const fakeCommands = fake(commands, {
+      lint: () => Promise.resolve(),
+    });
+    return execProgram(['lint'], {commands: fakeCommands}).then(() => {
+      const options = fakeCommands.lint.firstCall.args[1];
+      assert.strictEqual(options.shouldExitProgram, false);
+    });
+  });
 });
 
-
 describe('program.defaultVersionGetter', () => {
-  let root = path.join(__dirname, '..', '..');
+  const projectRoot = path.join(__dirname, '..', '..');
 
   it('returns the package version in production', () => {
-    let pkgFile = path.join(root, 'package.json');
+    const pkgFile = path.join(projectRoot, 'package.json');
     return fs.readFile(pkgFile)
       .then((pkgData) => {
-        const testBuildEnv = {localEnv: 'production'};
-        assert.equal(defaultVersionGetter(root, testBuildEnv),
+        const testBuildEnv = {globalEnv: 'production'};
+        assert.equal(defaultVersionGetter(projectRoot, testBuildEnv),
                    JSON.parse(pkgData).version);
       });
   });
 
-  it('returns git commit information in development', () => {
+  it('returns git commit information in development', function() {
+    if (process.env.APPVEYOR) {
+      // Test skipped because of $APPVEYOR' issues with git-rev-sync (mozilla/web-ext#774)
+      this.skip();
+      return;
+    }
     const commit = `${git.branch()}-${git.long()}`;
-    const testBuildEnv = {localEnv: 'development'};
-    assert.equal(defaultVersionGetter(root, testBuildEnv),
+    const testBuildEnv = {globalEnv: 'development'};
+    assert.equal(defaultVersionGetter(projectRoot, testBuildEnv),
                  commit);
   });
-
 });

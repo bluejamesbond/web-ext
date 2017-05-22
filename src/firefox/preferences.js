@@ -54,15 +54,6 @@ const prefsCommon: FirefoxPreferences = {
   // Disable app update.
   'app.update.enabled': false,
 
-  // Point update checks to a nonexistent local URL for fast failures.
-  'extensions.update.url': 'http://localhost/extensions-dummy/updateURL',
-  'extensions.blocklist.url':
-    'http://localhost/extensions-dummy/blocklistURL',
-
-  // Make sure opening about:addons won't hit the network.
-  'extensions.webservice.discoverURL':
-    'http://localhost/extensions-dummy/discoveryURL',
-
   // Allow unsigned add-ons.
   'xpinstall.signatures.required': false,
 };
@@ -127,14 +118,25 @@ export function getPrefs(
 export function coerceCLICustomPreference(
   cliPrefs: string | Array<string>
 ): FirefoxPreferences {
-  let customPrefs = {};
+  const customPrefs = {};
 
   if (!Array.isArray(cliPrefs)) {
     cliPrefs = [cliPrefs];
   }
 
-  for (let pref of cliPrefs) {
-    let [key, value] = pref.split('=');
+
+  for (const pref of cliPrefs) {
+    const prefsAry = pref.split('=');
+
+    if (prefsAry.length < 2) {
+      throw new UsageError(
+        `Incomplete custom preference: "${pref}". ` +
+        'Syntax expected: "prefname=prefvalue".'
+      );
+    }
+
+    const key = prefsAry[0];
+    let value = prefsAry.slice(1).join('=');
 
     if (/[^\w{@}.-]/.test(key)) {
       throw new UsageError(`Invalid custom preference name: ${key}`);

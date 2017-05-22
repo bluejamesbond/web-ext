@@ -16,9 +16,11 @@ const log = createLogger(__filename);
  */
 export class ZipFile {
   _zip: any;
+  _close: Promise<void> | null;
 
   constructor() {
     this._zip = null;
+    this._close = null;
   }
 
   /*
@@ -29,7 +31,18 @@ export class ZipFile {
     return promisify(yauzl.open)(...args)
       .then((zip) => {
         this._zip = zip;
+        this._close = new Promise((resolve) => {
+          zip.once('close', resolve);
+        });
       });
+  }
+
+  /**
+   * Close the zip file and wait fd to release.
+   */
+  close() {
+    this._zip.close();
+    return this._close;
   }
 
   /*
@@ -136,7 +149,9 @@ export function makeSureItFails(): Function {
  *
  */
  // $FLOW_IGNORE: fake can return any kind of object and fake a defined set of methods for testing.
-export function fake<T>(original: Object, methods: Object = {}): T {
+export function fake<T>(
+  original: Object, methods: Object = {}, skipProperties: Array<string> = []
+): T {
   var stub = {};
 
   // Provide stubs for all original members:
@@ -148,11 +163,12 @@ export function fake<T>(original: Object, methods: Object = {}): T {
   }
 
   var proto = Object.getPrototypeOf(original);
-  for (let key of props) {
-    if (!original.hasOwnProperty(key) && !proto.hasOwnProperty(key)) {
+  for (const key of props) {
+    if (skipProperties.indexOf(key) >= 0 ||
+       (!original.hasOwnProperty(key) && !proto.hasOwnProperty(key))) {
       continue;
     }
-    let definition = original[key] || proto[key];
+    const definition = original[key] || proto[key];
     if (typeof definition === 'function') {
       stub[key] = () => {
         log.warn(`Running stubbed function ${key} (default implementation)`);
@@ -177,15 +193,26 @@ export function fake<T>(original: Object, methods: Object = {}): T {
   return stub;
 }
 
+export function createFakeProcess() {
+  return fake(process, {}, ['EventEmitter', 'stdin']);
+}
+
 
 /*
  * Returns a fake Firefox client as would be returned by
  * connect() of 'node-firefox-connect'
  */
+
+type FakeFirefoxClientParams = {|
+  requestResult?: Object,
+  requestError?: Object,
+  makeRequestResult?: Object,
+  makeRequestError?: Object,
+|}
 export function fakeFirefoxClient({
-  requestResult = {}, requestError = null,
-  makeRequestResult = {}, makeRequestError = null,
-}: Object = {}) {
+  requestResult = {}, requestError,
+  makeRequestResult = {}, makeRequestError,
+}: FakeFirefoxClientParams= {}) {
   return {
     disconnect: sinon.spy(() => {}),
     request: sinon.spy(
@@ -230,5 +257,13 @@ export class TCPConnectError extends ExtendableError {
   constructor(msg: string = 'simulated connection error') {
     super(msg);
     this.code = 'ECONNREFUSED';
+  }
+}
+
+export class ErrorWithCode extends Error {
+  code: string;
+  constructor(code: ?string, message: ?string) {
+    super(message || 'pretend this is a system error');
+    this.code = code || 'SOME_CODE';
   }
 }

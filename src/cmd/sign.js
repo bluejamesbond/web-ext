@@ -19,34 +19,36 @@ export const extensionIdFile = '.web-extension-id';
 
 // Sign command types and implementation.
 
-export type SignParams = {
+export type SignParams = {|
   id?: string,
   verbose?: boolean,
   sourceDir: string,
   artifactsDir: string,
+  ignoreFiles?: Array<string>,
   apiKey: string,
   apiSecret: string,
   apiUrlPrefix: string,
   apiProxy: string,
   timeout: number,
-};
+|};
 
 export type SignOptions = {
   build?: typeof defaultBuilder,
   signAddon?: typeof defaultAddonSigner,
   preValidatedManifest?: ExtensionManifest,
+  shouldExitProgram?: boolean,
 };
 
-export type SignResult = {
+export type SignResult = {|
   success: boolean,
   id: string,
   downloadedFiles: Array<string>,
-};
+|};
 
 export default function sign(
   {
-    verbose, sourceDir, artifactsDir, apiKey, apiSecret,
-    apiUrlPrefix, apiProxy, id, timeout,
+    verbose, sourceDir, artifactsDir, ignoreFiles = [],
+    apiKey, apiSecret, apiUrlPrefix, apiProxy, id, timeout,
   }: SignParams,
   {
     build = defaultBuilder, signAddon = defaultAddonSigner,
@@ -65,8 +67,8 @@ export default function sign(
         manifestData = await getValidatedManifest(sourceDir);
       }
 
-      let [buildResult, idFromSourceDir] = await Promise.all([
-        build({sourceDir, artifactsDir: tmpDir.path()},
+      const [buildResult, idFromSourceDir] = await Promise.all([
+        build({sourceDir, ignoreFiles, artifactsDir: tmpDir.path()},
               {manifestData, showReadyMessage: false}),
         getIdFromSourceDir(sourceDir),
       ]);
@@ -77,6 +79,9 @@ export default function sign(
         throw new UsageError(
           `Cannot set custom ID ${id} because manifest.json ` +
           `declares ID ${manifestId}`);
+      }
+      if (id) {
+        log.debug(`Using custom ID declared as --id=${id}`);
       }
 
       if (manifestId) {
@@ -93,7 +98,7 @@ export default function sign(
         log.warn('No extension ID specified (it will be auto-generated)');
       }
 
-      let signingResult = await signAddon({
+      const signingResult = await signAddon({
         apiKey,
         apiSecret,
         apiUrlPrefix,
@@ -152,7 +157,7 @@ export async function getIdFromSourceDir(
     }
   });
 
-  let id = lines[0];
+  const id = lines[0];
   log.debug(`Found extension ID ${id} in ${filePath}`);
 
   if (!id) {
